@@ -1,7 +1,10 @@
 package sagan.projects.support;
 
+import sagan.blog.PostFormat;
+import sagan.blog.support.PostContentRenderer;
 import sagan.projects.Project;
 import sagan.projects.ProjectRelease;
+import sagan.projects.ProjectSample;
 import sagan.support.nav.Navigation;
 import sagan.support.nav.Section;
 
@@ -10,6 +13,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import javax.validation.Valid;
 
@@ -30,16 +34,18 @@ import static org.springframework.web.bind.annotation.RequestMethod.*;
  */
 @Controller
 @RequestMapping("/admin/projects")
-@Navigation(Section.PROJECTS)
-class ProjectAdminController {
+@Navigation(Section.PROJECTS) class ProjectAdminController {
     private static final List<String> CATEGORIES =
             Collections.unmodifiableList(Arrays.asList("incubator", "active", "attic", "community"));
 
     private ProjectMetadataService service;
 
+    private final PostContentRenderer renderer;
+
     @Autowired
-    public ProjectAdminController(ProjectMetadataService service) {
+    public ProjectAdminController(ProjectMetadataService service, PostContentRenderer renderer) {
         this.service = service;
+        this.renderer = renderer;
     }
 
     @RequestMapping(value = "", method = GET)
@@ -63,7 +69,6 @@ class ProjectAdminController {
                 "http://github.com/spring-projects/spring-new",
                 "http://projects.spring.io/spring-new",
                 new ArrayList<>(Arrays.asList(release)),
-                false,
                 CATEGORIES.get(0));
 
         return edit(project, model);
@@ -83,7 +88,7 @@ class ProjectAdminController {
 
     private String edit(Project project, Model model) {
         if (project == null) {
-            return "pages/404";
+            return "error/404";
         }
 
         denormalizeProjectReleases(project);
@@ -92,14 +97,25 @@ class ProjectAdminController {
         if (!releases.isEmpty()) {
             model.addAttribute("groupId", releases.get(0).getGroupId());
         }
+
+        int nextAvailableSampleDisplayOrder = project.getProjectSamples()
+                .stream()
+                .mapToInt(ProjectSample::getDisplayOrder)
+                .max()
+                .orElse(0) + 1;
+
         model.addAttribute("project", project);
         model.addAttribute("categories", CATEGORIES);
+        model.addAttribute("projectSampleDisplayOrder", nextAvailableSampleDisplayOrder);
         return "admin/project/edit";
     }
 
     @RequestMapping(value = "{id}", method = POST)
-    public String save(@Valid Project project, @RequestParam(defaultValue = "") List<String> releasesToDelete,
-                       @RequestParam String groupId) {
+    public String save(@Valid Project project,
+                       @RequestParam(defaultValue = "") List<String> releasesToDelete,
+                       @RequestParam(defaultValue = "") List<Integer> samplesToDelete,
+                       @RequestParam String groupId,
+                       @RequestParam(required = false) String parentId) {
         Iterator<ProjectRelease> iReleases = project.getProjectReleases().iterator();
         while (iReleases.hasNext()) {
             ProjectRelease release = iReleases.next();
@@ -108,6 +124,25 @@ class ProjectAdminController {
             }
         }
         normalizeProjectReleases(project, groupId);
+
+        String renderedBootConfig = this.renderer.render(project.getRawBootConfig(), PostFormat.ASCIIDOC);
+        project.setRenderedBootConfig(renderedBootConfig);
+        String renderedOverview = this.renderer.render(project.getRawOverview(), PostFormat.ASCIIDOC);
+        project.setRenderedOverview(renderedOverview);
+
+        if (parentId != null) {
+            Project parentProject = service.getProject(parentId);
+            project.setParentProject(parentProject);
+        }
+
+        project.setProjectSamples(
+                project.getProjectSamples()
+                        .stream()
+                        .filter(ps -> !(ps.getTitle().isEmpty() || ps.getUrl().isEmpty()))
+                        .filter(ps -> !samplesToDelete.contains(ps.getDisplayOrder()))
+                        .collect(Collectors.toList())
+        );
+
         service.save(project);
 
         return "redirect:" + project.getId();

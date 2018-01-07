@@ -1,28 +1,38 @@
 package sagan.blog.support;
 
+import sagan.blog.PostFormat;
+
+import java.util.HashMap;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 @Service
-// This is the "original" renderer, It can be re-activated by running in the "original" profile.
-@Profile("original")
-class PostContentRenderer {
+public class PostContentRenderer {
 
-    private MarkdownService markdownService;
+    private Map<PostFormat, MarkdownService> renderers = new HashMap<>();
 
     @Autowired
-    public PostContentRenderer(@Qualifier("pegdown") MarkdownService markdownService) {
-        this.markdownService = markdownService;
+    public PostContentRenderer(@Qualifier("pegdown") MarkdownService markdownService,
+                               @Qualifier("asciidoctor") MarkdownService asciidoctor) {
+        renderers.put(PostFormat.ASCIIDOC, asciidoctor);
+        renderers.put(PostFormat.MARKDOWN, markdownService);
     }
 
-    public String render(String content) {
-        String html = markdownService.renderToHtml(content);
-        return renderCallouts(decode(html));
+    public String render(String content, PostFormat format) {
+        MarkdownService renderer = renderers.get(format);
+        if (renderer == null) {
+            throw new IllegalArgumentException("Unsupported post format: " + format);
+        }
+        String html = renderer.renderToHtml(content);
+        if (format == PostFormat.MARKDOWN) {
+            html = renderCallouts(decode(html));
+        }
+        return html;
     }
 
     private String decode(String html) {

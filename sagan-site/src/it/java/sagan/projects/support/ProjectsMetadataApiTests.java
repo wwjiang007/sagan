@@ -11,17 +11,20 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.persistence.EntityManager;
+
 import org.junit.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.json.JacksonJsonParser;
 import org.springframework.boot.test.autoconfigure.restdocs.AutoConfigureRestDocs;
 import org.springframework.http.MediaType;
-import org.springframework.restdocs.mockmvc.RestDocumentationResultHandler;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultHandler;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.tomakehurst.wiremock.client.WireMock;
 
 import static junit.framework.TestCase.fail;
 import static org.hamcrest.CoreMatchers.*;
@@ -29,6 +32,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.springframework.restdocs.mockmvc.MockMvcRestDocumentation.document;
 import static org.springframework.restdocs.operation.preprocess.Preprocessors.*;
+import static org.springframework.cloud.contract.wiremock.restdocs.WireMockRestDocs.verify;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import saganx.AbstractIntegrationTests;
@@ -42,7 +46,10 @@ public class ProjectsMetadataApiTests extends AbstractIntegrationTests {
     @Autowired
     private ObjectMapper mapper;
 
-    private RestDocumentationResultHandler docs(String name) {
+    @Autowired
+    private EntityManager entityManager;
+
+    private ResultHandler docs(String name) {
         return document(name,
                 preprocessRequest(prettyPrint()),
                 preprocessResponse(prettyPrint()));
@@ -56,7 +63,9 @@ public class ProjectsMetadataApiTests extends AbstractIntegrationTests {
                                 .get("/project_metadata/spring-framework"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("application/json"))
-                .andDo(docs("project"));
+                .andDo(verify().wiremock(
+                        WireMock.get(WireMock.urlPathMatching("/project_metadata/spring-framework")).atPriority(1)
+                        ).stub("project"));
     }
 
     @Test
@@ -67,7 +76,9 @@ public class ProjectsMetadataApiTests extends AbstractIntegrationTests {
                                 .get("/project_metadata/spring-framework?callback=a_function_name"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("application/javascript"))
-                .andDo(docs("callback"));
+                .andDo(verify().wiremock(WireMock.get(WireMock.urlPathMatching("/project_metadata/spring-framework"))
+                        .withQueryParam("callback", WireMock.matching("a_function_name")).atPriority(5)
+                        ).stub("callback"));
     }
 
     @Test
@@ -79,10 +90,10 @@ public class ProjectsMetadataApiTests extends AbstractIntegrationTests {
     }
 
     @Test
-    public void projectMetadata_withSnapshot() throws Exception {
-        List<Object> releases = getAndCheckProjectReleases("spring-security-kerberos", "Spring Security Kerberos");
+    public void projectMetadata_withPreRelease() throws Exception {
+        List<Object> releases = getAndCheckProjectReleases("spring-framework", "Spring Framework");
 
-        checkSnapshot(releases);
+        checkMilestone(releases);
     }
 
     @Test
@@ -143,7 +154,7 @@ public class ProjectsMetadataApiTests extends AbstractIntegrationTests {
             Map<String, Object> map = getRelease(release);
             releases.add(map);
         }
-        project.getProjectReleases().iterator().next().setVersion("1.2.8.RELEASE");
+        releases.iterator().next().put("version", "1.2.8.RELEASE");
         mockMvc
                 .perform(
                         MockMvcRequestBuilders
@@ -153,6 +164,7 @@ public class ProjectsMetadataApiTests extends AbstractIntegrationTests {
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("application/json"))
                 .andDo(docs("update_project"));
+        entityManager.flush();
     }
 
     private Map<String, Object> getRelease(ProjectRelease release) {
@@ -221,56 +233,46 @@ public class ProjectsMetadataApiTests extends AbstractIntegrationTests {
     }
 
     private void checkCurrentRelease(List<Object> releases) {
+
         @SuppressWarnings("unchecked")
-        Map<String, Object> release = (Map<String, Object>) releases.get(0);
-        assertThat((String) release.get("version"), equalTo("4.0.1.BUILD-SNAPSHOT"));
+        Map<String, Object> release = (Map<String, Object>) releases.stream()
+				.filter(r -> (Boolean) ((Map<String, Object>)r).get("current"))
+				.findFirst().get();
+        assertThat((String) release.get("version"), endsWith(".RELEASE"));
         assertThat(
                 (String) release.get("refDocUrl"),
-                equalTo("http://docs.spring.io/spring/docs/4.0.1.BUILD-SNAPSHOT/spring-framework-reference/htmlsingle/"));
+                containsString("/spring-framework-reference/"));
         assertThat((String) release.get("apiDocUrl"),
-                equalTo("http://docs.spring.io/spring/docs/4.0.1.BUILD-SNAPSHOT/javadoc-api/"));
+                containsString("/javadoc-api/"));
         assertThat((Boolean) release.get("preRelease"), equalTo(false));
-        assertThat((Boolean) release.get("current"), equalTo(false));
-        assertThat((Boolean) release.get("generalAvailability"), equalTo(false));
-        assertThat((Boolean) release.get("snapshot"), equalTo(true));
+        assertThat((Boolean) release.get("generalAvailability"), equalTo(true));
+        assertThat((Boolean) release.get("snapshot"), equalTo(false));
 
         Map<String, Object> repository = getRepository(release);
-        assertThat(repository, notNullValue());
+        assertThat(repository, nullValue());
     }
 
     private void checkMilestone(List<Object> releases) {
         @SuppressWarnings("unchecked")
-        Map<String, Object> release = (Map<String, Object>) releases.get(1);
-        assertThat((String) release.get("version"), equalTo("4.0.0.RELEASE"));
+		Map<String, Object> release = (Map<String, Object>) releases.stream()
+				.filter(r -> (Boolean) ((Map<String, Object>)r).get("preRelease"))
+				.findFirst().get();
+        assertThat((String) release.get("version"), containsString(".RC"));
         assertThat((String) release.get("refDocUrl"),
-                equalTo("http://docs.spring.io/spring/docs/4.0.0.RELEASE/spring-framework-reference/htmlsingle/"));
+                containsString("/spring-framework-reference/"));
         assertThat((String) release.get("apiDocUrl"),
-                equalTo("http://docs.spring.io/spring/docs/4.0.0.RELEASE/javadoc-api/"));
-        assertThat((Boolean) release.get("preRelease"), equalTo(false));
-        assertThat((Boolean) release.get("current"), equalTo(true));
-        assertThat((Boolean) release.get("generalAvailability"), equalTo(true));
-        assertThat((Boolean) release.get("snapshot"), equalTo(false));
-    }
-
-    private void checkSnapshot(List<Object> releases) {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> release = (Map<String, Object>) releases.get(0);
-        assertThat((String) release.get("version"), equalTo("1.0.0.CI-SNAPSHOT"));
-        assertThat((String) release.get("refDocUrl"),
-                equalTo("http://docs.spring.io/spring-security-kerberos/docs/1.0.0.CI-SNAPSHOT/reference/html"));
-        assertThat((String) release.get("apiDocUrl"),
-                equalTo("http://docs.spring.io/spring-security-kerberos/docs/1.0.0.CI-SNAPSHOT/api/"));
-        assertThat((Boolean) release.get("preRelease"), equalTo(false));
+                containsString("/javadoc-api/"));
+        assertThat((Boolean) release.get("preRelease"), equalTo(true));
         assertThat((Boolean) release.get("current"), equalTo(false));
         assertThat((Boolean) release.get("generalAvailability"), equalTo(false));
-        assertThat((Boolean) release.get("snapshot"), equalTo(true));
+        assertThat((Boolean) release.get("snapshot"), equalTo(false));
 
         Map<String, Object> repository = getRepository(release);
 
-        assertThat((String) repository.get("id"), equalTo("spring-snapshots"));
-        assertThat((String) repository.get("name"), equalTo("Spring Snapshots"));
-        assertThat((String) repository.get("url"), equalTo("https://repo.spring.io/libs-snapshot"));
-        assertThat((Boolean) repository.get("snapshotsEnabled"), equalTo(true));
+        assertThat((String) repository.get("id"), equalTo("spring-milestones"));
+        assertThat((String) repository.get("name"), equalTo("Spring Milestones"));
+        assertThat((String) repository.get("url"), equalTo("https://repo.spring.io/libs-milestone"));
+        assertThat((Boolean) repository.get("snapshotsEnabled"), equalTo(false));
     }
 
     private Map<String, Object> getRepository(Map<String, Object> release) {

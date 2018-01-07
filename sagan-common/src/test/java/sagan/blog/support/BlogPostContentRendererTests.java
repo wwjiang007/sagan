@@ -1,5 +1,7 @@
 package sagan.blog.support;
 
+import sagan.blog.PostFormat;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -20,14 +22,14 @@ public class BlogPostContentRendererTests {
 
     @Before
     public void setUp() throws Exception {
-        renderer = new PostContentRenderer(markdownService);
+        renderer = new PostContentRenderer(markdownService, null);
     }
 
     @Test
     public void sendsContentToMarkdownRenderer() throws Exception {
         given(markdownService.renderToHtml("CONTENT")).willReturn("RENDERED CONTENT");
 
-        assertThat(renderer.render("CONTENT"), equalTo("RENDERED CONTENT"));
+        assertThat(renderer.render("CONTENT", PostFormat.MARKDOWN), equalTo("RENDERED CONTENT"));
     }
 
     @Test
@@ -42,14 +44,14 @@ public class BlogPostContentRendererTests {
 
         given(markdownService.renderToHtml(encoded)).willReturn(encoded);
 
-        assertThat(renderer.render(encoded), equalTo(decoded));
+        assertThat(renderer.render(encoded, PostFormat.MARKDOWN), equalTo(decoded));
     }
 
     @Test
     public void rendersCallouts() throws Exception {
         given(markdownService.renderToHtml("CONTENT")).willReturn("[callout title=Title]Callout body[/callout]");
 
-        assertThat(renderer.render("CONTENT"), equalTo("<div class=\"callout\">\n"
+        assertThat(renderer.render("CONTENT", PostFormat.MARKDOWN), equalTo("<div class=\"callout\">\n"
                 + "<div class=\"callout-title\">Title</div>\n" + "Callout body\n" + "</div>"));
     }
 
@@ -59,7 +61,7 @@ public class BlogPostContentRendererTests {
                 .willReturn(
                         "[callout title=Title]Callout body[/callout] other content [callout title=Other Title]Other Callout body[/callout]");
 
-        assertThat(renderer.render("CONTENT"), equalTo("<div class=\"callout\">\n"
+        assertThat(renderer.render("CONTENT", PostFormat.MARKDOWN), equalTo("<div class=\"callout\">\n"
                 + "<div class=\"callout-title\">Title</div>\n" + "Callout body\n" + "</div>" + " other content "
                 + "<div class=\"callout\">\n" + "<div class=\"callout-title\">Other Title</div>\n"
                 + "Other Callout body\n" + "</div>"));

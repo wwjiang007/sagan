@@ -16,17 +16,16 @@
 
 package sagan.projects;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.springframework.util.StringUtils;
 
-import javax.persistence.ElementCollection;
-import javax.persistence.Entity;
-import javax.persistence.Id;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+import javax.persistence.*;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Entity
+@NamedEntityGraph(name = "Project.tree",
+        attributeNodes = @NamedAttributeNode("childProjectList"))
 public class Project {
 
     @Id
@@ -35,31 +34,46 @@ public class Project {
     private String repoUrl;
     private String siteUrl;
     private String category;
+    private String rawBootConfig;
+    private String renderedBootConfig;
+    private String rawOverview;
+    private String renderedOverview;
+    private int displayOrder = Integer.MAX_VALUE;
+
+    @ManyToOne
+    @JsonIgnore
+    private Project parentProject;
+
+    @OneToMany(mappedBy = "parentProject")
+    private List<Project> childProjectList;
 
     @ElementCollection
     private List<ProjectRelease> releaseList = new ArrayList<>();
-    private boolean isAggregator;
     private String stackOverflowTags;
+
+    @ElementCollection
+    private List<ProjectSample> sampleList = new ArrayList<>();
 
     @SuppressWarnings("unused")
     private Project() {
     }
 
-    public Project(String id, String name, String repoUrl, String siteUrl, List<ProjectRelease> releaseList,
-                   boolean isAggregator, String category) {
+    public Project(String id, String name, String repoUrl, String siteUrl,
+                   List<ProjectRelease> releaseList, String category) {
         this.id = id;
         this.name = name;
         this.repoUrl = repoUrl;
         this.siteUrl = siteUrl;
         this.releaseList = releaseList;
-        this.isAggregator = isAggregator;
         this.category = category;
     }
 
-    public Project(String id, String name, String repoUrl, String siteUrl, List<ProjectRelease> releaseList,
-                   boolean isAggregator, String category, String stackOverflowTags) {
-        this(id, name, repoUrl, siteUrl, releaseList, isAggregator, category);
+    public Project(String id, String name, String repoUrl, String siteUrl, int displayOrder, List<ProjectRelease> releaseList,
+                   String category, String stackOverflowTags, String bootconfig) {
+        this(id, name, repoUrl, siteUrl, releaseList, category);
+        this.setDisplayOrder(displayOrder);
         this.setStackOverflowTags(stackOverflowTags);
+        this.setRawBootConfig(bootconfig);
     }
 
     public String getCategory() {
@@ -94,10 +108,6 @@ public class Project {
         this.releaseList = releaseList;
     }
 
-    public void setAggregator(boolean isAggregator) {
-        this.isAggregator = isAggregator;
-    }
-
     public String getName() {
         return name;
     }
@@ -126,10 +136,6 @@ public class Project {
         return !siteUrl.isEmpty();
     }
 
-    public boolean isAggregator() {
-        return isAggregator;
-    }
-
     public String getStackOverflowTags() {
         return stackOverflowTags;
     }
@@ -140,6 +146,70 @@ public class Project {
 
     public Set<String> getStackOverflowTagList() {
         return StringUtils.commaDelimitedListToSet(this.stackOverflowTags);
+    }
+
+    public String getRawBootConfig() {
+        return rawBootConfig;
+    }
+
+    public void setRawBootConfig(String rawBootConfig) {
+        this.rawBootConfig = rawBootConfig;
+    }
+
+    public String getRenderedBootConfig() {
+        return renderedBootConfig;
+    }
+
+    public void setRenderedBootConfig(String renderedBootConfig) {
+        this.renderedBootConfig = renderedBootConfig;
+    }
+
+    public String getRawOverview() {
+        return rawOverview;
+    }
+
+    public void setRawOverview(String rawOverview) {
+        this.rawOverview = rawOverview;
+    }
+
+    public String getRenderedOverview() {
+        return renderedOverview;
+    }
+
+    public void setRenderedOverview(String renderedOverview) {
+        this.renderedOverview = renderedOverview;
+    }
+
+    public int getDisplayOrder() {
+        return displayOrder;
+    }
+
+    public void setDisplayOrder(int displayOrder) {
+        this.displayOrder = displayOrder;
+    }
+
+    public Project getParentProject() {
+        return parentProject;
+    }
+
+    public String getParentId() {
+        if (parentProject == null) {
+            return null;
+        }
+
+        return parentProject.getId();
+    }
+
+    public void setParentProject(Project parentProject) {
+        this.parentProject = parentProject;
+    }
+
+    public List<Project> getChildProjectList() {
+        return childProjectList;
+    }
+
+    public void setChildProjectList(List<Project> childProjectList) {
+        this.childProjectList = childProjectList;
     }
 
     @Override
@@ -170,7 +240,6 @@ public class Project {
                 ", repoUrl='" + repoUrl + '\'' +
                 ", siteUrl='" + siteUrl + '\'' +
                 ", releaseList=" + releaseList +
-                ", isAggregator=" + isAggregator +
                 ", stackOverflowTags=" + stackOverflowTags +
                 '}';
     }
@@ -183,7 +252,7 @@ public class Project {
             if (release.getRepository() != null && release.getRepository().equals(projectRelease.getRepository())) {
                 release.setRepository(projectRelease.getRepository());
             }
-            if (projectRelease.getVersion().equals(release)) {
+            if (projectRelease.getVersion().equals(release.getVersion())) {
                 releases.set(i, release);
                 found = true;
                 break;
@@ -219,4 +288,34 @@ public class Project {
         return null;
     }
 
+    public Optional<ProjectRelease> getMostCurrentRelease() {
+        return this.getProjectReleases().stream()
+                .filter(ProjectRelease::isCurrent)
+                .findFirst();
+    }
+
+    public List<ProjectRelease> getNonMostCurrentReleases() {
+        Optional<ProjectRelease> mostCurrentRelease = this.getMostCurrentRelease();
+        if (mostCurrentRelease.isPresent()) {
+            return this.getProjectReleases().stream()
+                    .filter(projectRelease -> !projectRelease.equals(mostCurrentRelease.get()))
+                    .collect(Collectors.toList());
+        }
+        else {
+            return this.getProjectReleases();
+        }
+    }
+
+    public boolean isTopLevelProject() {
+        return parentProject == null;
+    }
+
+    public List<ProjectSample> getProjectSamples() {
+        sampleList.sort(Comparator.comparingInt(ProjectSample::getDisplayOrder));
+        return sampleList;
+    }
+
+    public void setProjectSamples(List<ProjectSample> sampleList) {
+        this.sampleList = sampleList;
+    }
 }

@@ -3,48 +3,40 @@ package sagan.guides.support;
 import sagan.guides.AbstractGuide;
 import sagan.guides.ContentProvider;
 import sagan.guides.DefaultGuideMetadata;
+import sagan.guides.Guide;
 import sagan.guides.GuideMetadata;
 import sagan.guides.ImageProvider;
+import sagan.projects.Project;
 import sagan.projects.support.ProjectMetadataService;
 import sagan.support.ResourceNotFoundException;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.springframework.util.Assert;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClientException;
 
 /**
  * Repository implementation providing data access services for guides by repo prefix.
  */
-public abstract class PrefixDocRepository<T extends AbstractGuide> implements DocRepository<T, GuideMetadata>,
-        ContentProvider<T>, ImageProvider {
+public abstract class PrefixDocRepository<T extends Guide> implements DocRepository<T, GuideMetadata>,
+        ContentProvider<T>, ImageProvider, ProjectGuidesRepository {
 
     protected final Logger log = LoggerFactory.getLogger(getClass());
 
     private static final String REPO_BASE_PATH = "/repos/%s/%s";
     private static final String README_PATH_ASC = REPO_BASE_PATH + "/zipball";
 
-    private final MultiValueMap<String, String> tagMultimap = new LinkedMultiValueMap<>();
     private final GuideOrganization org;
-    private final ProjectMetadataService projectMetadataService;
     private final AsciidoctorUtils asciidoctorUtils = new AsciidoctorUtils();
 
     private String prefix;
 
     public PrefixDocRepository(GuideOrganization org, ProjectMetadataService projectMetadataService, String prefix) {
         this.org = org;
-        this.projectMetadataService = projectMetadataService;
         this.prefix = prefix;
     }
 
@@ -62,9 +54,7 @@ public abstract class PrefixDocRepository<T extends AbstractGuide> implements Do
     public GuideMetadata findMetadata(String tutorial) {
         String repoName = this.prefix + tutorial;
         String description = getRepoDescription(repoName);
-        Set<String> tags = tagMultimap.get(repoName) != null ? new HashSet<>(tagMultimap.get(repoName))
-                : Collections.emptySet();
-        return new DefaultGuideMetadata(org.getName(), tutorial, repoName, description, tags);
+        return new DefaultGuideMetadata(org.getName(), tutorial, repoName, description);
     }
 
     @Override
@@ -73,8 +63,7 @@ public abstract class PrefixDocRepository<T extends AbstractGuide> implements Do
         return org.findRepositoriesByPrefix(this.prefix)
                 .stream()
                 .map(repo -> new DefaultGuideMetadata(org.getName(), repo.getName().replaceAll("^" + this.prefix, ""),
-                        repo.getName(), repo.getDescription(), new HashSet<String>(tagMultimap.getOrDefault(repo
-                                .getName(), Collections.emptyList()))))
+                        repo.getName(), repo.getDescription()))
                 .collect(Collectors.toList());
     }
 
@@ -89,19 +78,25 @@ public abstract class PrefixDocRepository<T extends AbstractGuide> implements Do
     }
 
     @Override
-    public T populate(T tutorial) {
-        String repoName = tutorial.getRepoName();
+    public List<GuideMetadata> findByProject(Project project) {
+        return this.findAllMetadata()
+                .stream()
+                .filter(guideMetadata -> guideMetadata.getProjects().contains(project.getId()))
+                .collect(Collectors.toList());
+    }
 
-        AsciidocGuide asciidocGuide = asciidoctorUtils.getDocument(org, String.format(README_PATH_ASC, org.getName(),
-                repoName));
-        tagMultimap.merge(repoName, new ArrayList<>(asciidocGuide.getTags()), (source, target) -> {
-            Set<String> tags = new LinkedHashSet<>(target);
-            tags.addAll(source);
-            return new ArrayList<>(tags);
-        });
-        tutorial.setContent(asciidocGuide.getContent());
-        tutorial.setSidebar(asciidoctorUtils.generateDynamicSidebar(projectMetadataService, asciidocGuide));
-        return tutorial;
+    @Override
+    public T populate(T guide) {
+        String repoName = guide.getRepoName();
+        if (guide instanceof AbstractGuide) {
+            AbstractGuide mutable = (AbstractGuide) guide;
+            AsciidocGuide asciidocGuide = asciidoctorUtils.getDocument(org, String.format(README_PATH_ASC, org
+                    .getName(),
+                    repoName));
+            mutable.setContent(asciidocGuide.getContent());
+            mutable.setTableOfContents(asciidocGuide.getTableOfContents());
+        }
+        return guide;
     }
 
     @Override
@@ -117,8 +112,8 @@ public abstract class PrefixDocRepository<T extends AbstractGuide> implements Do
     }
 
     public String parseGuideName(String repositoryName) {
-        Assert.hasText(repositoryName);
-        Assert.isTrue(repositoryName.startsWith(this.prefix));
+        Assert.hasText(repositoryName, "repository name must not be empty");
+        Assert.isTrue(repositoryName.startsWith(this.prefix), "repository name should start with " + this.prefix);
         return repositoryName.substring(this.prefix.length());
     }
 

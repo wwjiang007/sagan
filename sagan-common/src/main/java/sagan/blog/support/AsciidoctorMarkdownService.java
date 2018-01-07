@@ -5,9 +5,18 @@ import org.asciidoctor.Attributes;
 import org.asciidoctor.OptionsBuilder;
 import org.asciidoctor.SafeMode;
 
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+
+@Service
+@Qualifier("asciidoctor")
 public class AsciidoctorMarkdownService implements MarkdownService {
 
-    Asciidoctor asciidoctor = Asciidoctor.Factory.create();
+    private final Asciidoctor asciidoctor;
+
+    public AsciidoctorMarkdownService(Asciidoctor asciidoctor) {
+        this.asciidoctor = asciidoctor;
+    }
 
     @Override
     public String renderToHtml(String markdownSource) {
